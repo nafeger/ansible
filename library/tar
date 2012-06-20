@@ -1,0 +1,80 @@
+#!/usr/bin/python -tt
+# attempt to untar a file.
+
+import tarfile
+
+import sys
+import os
+import shlex
+import syslog
+#import file
+
+def dump_kv(vars):
+    return " ".join("%s='%s'" % (k,v) for (k,v) in vars.items())
+
+def exit_kv(rc=0, **kwargs):
+    if 'path' in kwargs:
+        add_path_info(kwargs)
+    print dump_kv(kwargs)
+    sys.exit(rc)
+
+def untar(src, dest):
+    if tarfile.is_tarfile(src):
+        tfile = tarfile.open(src)
+        # list all contents
+        #print "contents:"
+        #print tfile.list(verbose=False)
+        # extract all contents
+        tfile.extractall(dest)
+    else:
+        exit_kv(rc=-1, error="%src is not a tarfile")
+
+#src = '/Users/nafeger/src/ansible/tmp/file.tar'
+#dest = '/Users/nafeger/src/ansible/tmp/dest'
+
+if len(sys.argv) == 1:
+	exit_kv(rc=1, failed=1, msg="incorrect number of arguments given")
+argfile = sys.argv[1]
+if not os.path.exists(argfile):
+	exit_kv(rc=1, failed=1, msg="file %s does not exist" % (argfile))
+
+args = open(argfile, 'r').read()
+items = shlex.split(args)
+syslog.openlog('ansible-%s' % os.path.basename(__file__))
+syslog.syslog(syslog.LOG_NOTICE, 'Invoked with %s' % args)
+
+
+params = {}
+for x in items:
+    (k, v) = x.split("=")
+    params[k] = v
+
+src  = params['src']
+dest = params['dest']
+if src:
+    src = os.path.expanduser(src)
+if dest:
+    dest = os.path.expanduser(dest)
+ 
+# raise an error if there is no src file
+if not os.path.exists(src):
+    print "failed=1 msg='Source %s failed to locate source tarball.'" % src
+    sys.exit(1)
+
+#md5sum = None
+#changed = False
+#if os.path.exists(dest):
+#    md5sum = os.popen("md5sum %s" % dest).read().split()[0]
+#
+#md5sum2 = os.popen("md5sum %s" % src).read().split()[0]
+#
+#if md5sum != md5sum2:
+#    os.system("cp %s %s" % (src, dest))
+#    changed = True
+#
+# mission accomplished
+#print "md5sum=%s changed=%s" % (md5sum2, changed)
+#os.system("cp %s %s" % (src, dest))
+untar(src, dest)
+exit_kv(src=src, dest=dest, msg="Successfully untared %s to %s" % (src, dest))
+
