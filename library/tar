@@ -7,7 +7,23 @@ import sys
 import os
 import shlex
 import syslog
-#import file
+import hashlib
+try:
+    import json
+except ImportError:
+    import simplejson as json
+
+# 
+# tar expected to be called with src=file already copied to server dest=some directory to extract to
+#     action=extract
+
+# borrowed from: http://stackoverflow.com/a/4213255/8563
+def md5sum(filename):
+	md5 = hashlib.md5()
+	with open(filename,'rb') as f: 
+	    for chunk in iter(lambda: f.read(128*md5.block_size), b''): 
+	         md5.update(chunk)
+	return md5.hexdigest()
 
 def dump_kv(vars):
     return " ".join("%s='%s'" % (k,v) for (k,v) in vars.items())
@@ -21,16 +37,9 @@ def exit_kv(rc=0, **kwargs):
 def untar(src, dest):
     if tarfile.is_tarfile(src):
         tfile = tarfile.open(src)
-        # list all contents
-        #print "contents:"
-        #print tfile.list(verbose=False)
-        # extract all contents
         tfile.extractall(dest)
     else:
         exit_kv(rc=-1, error="%src is not a tarfile")
-
-#src = '/Users/nafeger/src/ansible/tmp/file.tar'
-#dest = '/Users/nafeger/src/ansible/tmp/dest'
 
 if len(sys.argv) == 1:
 	exit_kv(rc=1, failed=1, msg="incorrect number of arguments given")
@@ -51,30 +60,49 @@ for x in items:
 
 src  = params['src']
 dest = params['dest']
+if params.has_key('action'):
+	action = params['action']
+markerlocation = None
+if params.has_key('markerlocation'):
+	markerlocation = params['markerlocation']
+	
 if src:
     src = os.path.expanduser(src)
 if dest:
     dest = os.path.expanduser(dest)
+# only extract is currently supported
+if action != 'extract':
+    action = 'extract'
  
 # raise an error if there is no src file
 if not os.path.exists(src):
-    print "failed=1 msg='Source %s failed to locate source tarball.'" % src
-    sys.exit(1)
+	exit_kv(rc=1, failed=1, msg="file %s does not exist" % (argfile))
 
-#md5sum = None
-#changed = False
-#if os.path.exists(dest):
-#    md5sum = os.popen("md5sum %s" % dest).read().split()[0]
-#
-#md5sum2 = os.popen("md5sum %s" % src).read().split()[0]
-#
-#if md5sum != md5sum2:
-#    os.system("cp %s %s" % (src, dest))
-#    changed = True
-#
-# mission accomplished
-#print "md5sum=%s changed=%s" % (md5sum2, changed)
-#os.system("cp %s %s" % (src, dest))
-untar(src, dest)
+if action == 'extract':
+    newMD5 = None
+    if (markerlocation):
+        # read marker file if exists
+        recordedMD5 = None
+        if os.path.exists(markerlocation): 
+            with open(markerlocation) as f: 
+                 markerFile = json.loads(f.read())
+                 if markerFile.has_key('srcmd5'):
+                     recordedMD5 = markerFile['srcmd5']
+        # make new md5
+        newMD5 = md5sum(src)
+        # compare
+        if (newMD5 == recordedMD5) :
+            msg = "noop on untar new file matches old: %s " % (src)
+            syslog.syslog(syslog.LOG_NOTICE, msg)
+            exit_kv(src=src, dest=dest, msg=msg)
+        
+    
+    syslog.syslog(syslog.LOG_NOTICE, "md5 src: %s; recordedmd5: %s" % (newMD5, recordedMD5))
+    untar(src, dest)
+    
+    # record new md5 after untaring
+    if (markerlocation and newMD5):
+        with open(markerlocation, 'w') as f: 
+            f.write(json.dumps({'srcmd5': newMD5}))
+    
 exit_kv(src=src, dest=dest, msg="Successfully untared %s to %s" % (src, dest))
-
